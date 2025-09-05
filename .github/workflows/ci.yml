@@ -1,97 +1,46 @@
-# .github/workflows/ci.yml
 name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-    
-    - name: Install dependencies for backend
-      run: |
-        cd backend
-        pip install -r requirements.txt
-    
-    - name: Install dependencies for frontend
-      run: |
-        cd frontend
-        pip install -r requirements.txt
-    
-    - name: Install dependencies for logger
-      run: |
-        cd logger
-        pip install -r requirements.txt
-    
-    - name: Run backend tests
-      run: |
-        cd backend
-        python -m pytest tests/ || echo "No tests found, skipping..."
-    
-    - name: Run frontend tests
-      run: |
-        cd frontend
-        python -m pytest tests/ || echo "No tests found, skipping..."
 
-  build-and-push:
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-    
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v2
-    
-    - name: Login to DockerHub
-      uses: docker/login-action@v2
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
-    
-    - name: Build and push backend image
-      uses: docker/build-push-action@v4
-      with:
-        context: ./backend
-        push: true
-        tags: ${{ secrets.DOCKERHUB_USERNAME }}/python-backend:latest
-    
-    - name: Build and push frontend image
-      uses: docker/build-push-action@v4
-      with:
-        context: ./frontend
-        push: true
-        tags: ${{ secrets.DOCKERHUB_USERNAME }}/python-frontend:latest
-    
-    - name: Build and push logger image
-      uses: docker/build-push-action@v4
-      with:
-        context: ./logger
-        push: true
-        tags: ${{ secrets.DOCKERHUB_USERNAME }}/python-logger:latest
-    
-    - name: Notify on success
-      if: success()
-      run: |
-        curl -X POST -H 'Content-type: application/json' \
-        --data '{"text":"✅ Build and Push Successful for ${{ github.repository }}"}' \
-        ${{ secrets.SLACK_WEBHOOK_URL }} || echo "Slack notification failed"
-    
-    - name: Notify on failure
-      if: failure()
-      run: |
-        curl -X POST -H 'Content-type: application/json' \
-        --data '{"text":"❌ Build and Push Failed for ${{ github.repository }} - Check GitHub Actions"}' \
-        ${{ secrets.SLACK_WEBHOOK_URL }} || echo "Slack notification failed"
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install -r frontend/requirements.txt
+          pip install -r logger/requirements.txt
+
+      - name: Run tests
+        run: pytest
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker images
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/backend:latest ./backend
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/backend:latest
+          
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/frontend:latest ./frontend
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/frontend:latest
+          
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/logger:latest ./logger
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/logger:latest
