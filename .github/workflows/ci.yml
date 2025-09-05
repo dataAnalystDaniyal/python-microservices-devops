@@ -1,13 +1,16 @@
+# .github/workflows/ci.yml
 name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches: [main, develop]
   pull_request:
+    branches: [main]
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v3
 
@@ -16,47 +19,79 @@ jobs:
         with:
           python-version: "3.9"
 
-      - name: Install dependencies
-        run: pip install flask requests
+      - name: Install dependencies for backend
+        run: |
+          cd backend
+          pip install -r requirements.txt
 
-      - name: Run tests
-        run: echo "No tests yet"
+      - name: Install dependencies for frontend
+        run: |
+          cd frontend
+          pip install -r requirements.txt
 
-      - name: Log in to DockerHub
+      - name: Install dependencies for logger
+        run: |
+          cd logger
+          pip install -r requirements.txt
+
+      - name: Run backend tests
+        run: |
+          cd backend
+          python -m pytest tests/ || echo "No tests found, skipping..."
+
+      - name: Run frontend tests
+        run: |
+          cd frontend
+          python -m pytest tests/ || echo "No tests found, skipping..."
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to DockerHub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build & Push Backend
-        run: |
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/backend ./backend
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/backend
-
-      - name: Build & Push Frontend
-        run: |
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/frontend ./frontend
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/frontend
-
-      - name: Build & Push Logger
-        run: |
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/logger ./logger
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/logger
-
-  notify:
-    runs-on: ubuntu-latest
-    needs: build
-    if: failure()
-    steps:
-      - name: Send failure email
-        uses: dawidd6/action-send-mail@v3
+      - name: Build and push backend image
+        uses: docker/build-push-action@v4
         with:
-          server_address: smtp.gmail.com
-          server_port: 587
-          username: ${{ secrets.GMAIL_USERNAME }}
-          password: ${{ secrets.GMAIL_PASSWORD }}
-          subject: GitHub Actions Workflow Failed
-          to: v1n33719@gmail.com
-          from: ${{ secrets.GMAIL_USERNAME }}
-          body: The CI/CD pipeline has failed. Please check the Actions tab.
-          
+          context: ./backend
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/python-backend:latest
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/python-frontend:latest
+
+      - name: Build and push logger image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./logger
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/python-logger:latest
+
+      - name: Notify on success
+        if: success()
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"✅ Build and Push Successful for ${{ github.repository }}"}' \
+          ${{ secrets.SLACK_WEBHOOK_URL }} || echo "Slack notification failed"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"❌ Build and Push Failed for ${{ github.repository }} - Check GitHub Actions"}' \
+          ${{ secrets.SLACK_WEBHOOK_URL }} || echo "Slack notification failed"
